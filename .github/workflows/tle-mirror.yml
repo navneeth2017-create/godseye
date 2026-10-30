@@ -35,9 +35,22 @@ jobs:
       - name: Keep the groups that failed this time from the last run
         run: |
           git init -q prev && cd prev
-          if git fetch -q --depth 1 "https://github.com/${GITHUB_REPOSITORY}.git" tle-data 2>/dev/null; then
+          url="https://github.com/${GITHUB_REPOSITORY}.git"
+          # "No tle-data branch yet" (first run, ls-remote exit 2) is fine; "couldn't read it" is not: publishing
+          # without the last copy would delete every group CelesTrak refused this time, so fail and keep the old one.
+          for i in 1 2 3; do
+            rc=0; git ls-remote --exit-code "$url" refs/heads/tle-data >/dev/null || rc=$?
+            if [ "$rc" -eq 0 ] || [ "$rc" -eq 2 ]; then break; fi
+            sleep 10
+          done
+          if [ "$rc" -eq 0 ]; then
+            got=0
+            for i in 1 2 3; do git fetch -q --depth 1 "$url" tle-data && { got=1; break; }; sleep 10; done
+            [ "$got" -eq 1 ] || { echo "::error::could not fetch the last tle-data; not publishing"; exit 1; }
             git checkout -q FETCH_HEAD
             for f in tle/*.txt; do [ -e "../out/$f" ] || cp "$f" "../out/$f"; done
+          elif [ "$rc" -ne 2 ]; then
+            echo "::error::could not read the last tle-data (git ls-remote exit $rc); not publishing"; exit 1
           fi
       - name: Publish to tle-data
         run: |

@@ -175,6 +175,47 @@ test('CelesTrak answers 502 to an oversized TLE body without caching it', async 
   );
 });
 
+test('CelesTrak mirror copies are dated by their newest TLE epoch, so an old copy is served as STALE-ERROR', async (t) => {
+  isolateDisk(t);
+  t.mock.method(console, 'warn', () => {});
+  // one TLE whose epoch (line 1, columns 19-32: YYDDD.DDDDDDDD) is `days` ago
+  const tleFrom = (days) => {
+    const at = new Date(Date.now() - days * 86400_000);
+    const yearStart = Date.UTC(at.getUTCFullYear(), 0, 1);
+    const yy = String(at.getUTCFullYear() % 100).padStart(2, '0');
+    const day = ((at.getTime() - yearStart) / 86400_000 + 1)
+      .toFixed(8)
+      .padStart(12, '0');
+    return `ISS (ZARYA)\n1 25544U 98067A   ${yy}${day}  .00016717  00000-0  10270-3 0  9990\n2 25544  51.6416 247.4627 0006703 130.5360 325.0288 15.72125391563537\n`;
+  };
+  let mirrorBody;
+  const urls = [];
+  t.mock.method(globalThis, 'fetch', async (url) => {
+    urls.push(String(url));
+    if (String(url).includes('celestrak.org'))
+      throw Object.assign(new Error('fetch failed'), {
+        cause: { code: 'UND_ERR_CONNECT_TIMEOUT' },
+      });
+    return new Response(mirrorBody);
+  });
+  const request = install(celestrakProxy());
+  mirrorBody = tleFrom(0.2);
+  const fresh = await request('/api/celestrak', '/stations');
+  assert.equal(fresh.status, 200);
+  assert.equal(fresh.body, mirrorBody);
+  assert.ok(urls.at(-1).endsWith('/stations.txt'), 'served from the mirror');
+  assert.equal(fresh.headers['x-tle-cache'], 'MISS');
+  mirrorBody = tleFrom(9);
+  const old = await request('/api/celestrak', '/geo');
+  assert.equal(old.status, 200);
+  assert.equal(old.body, mirrorBody, 'an old copy still beats an empty layer');
+  assert.equal(old.headers['x-tle-cache'], 'STALE-ERROR');
+  assert.match(fsp.writeFile.mock.calls.at(-1).arguments[1], /"stale":true/);
+  const cached = await request('/api/celestrak', '/geo');
+  assert.equal(cached.headers['x-tle-cache'], 'STALE-ERROR', 'and when cached');
+  assert.equal(urls.filter((u) => u.endsWith('/geo.txt')).length, 1);
+});
+
 for (const preview of [false, true])
   test(`exported launch plugin preserves optional server auth and cache in ${preview ? 'preview' : 'development'}`, async (t) => {
     isolateDisk(t);

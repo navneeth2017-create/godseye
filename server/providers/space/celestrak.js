@@ -75,6 +75,23 @@ export function celestrakProxy() {
   ).replace(/\/+$/, '');
   let primaryDownUntil = 0;
 
+  // The mirror republishes a group's last good copy, however old, when CelesTrak refuses it, so the copy is dated by
+  // its content: TLE line 1 carries each element set's epoch (columns 19-32, YYDDD.DDDDDDDD). Some objects in every
+  // group are refitted within hours, so a newest epoch more than 3 days old means the copy itself is old.
+  const MIRROR_STALE_MS = 3 * 86400_000;
+  function newestTleEpochMs(body) {
+    let newest = -Infinity;
+    for (const line of body.split('\n')) {
+      if (!line.startsWith('1 ')) continue;
+      const yy = line.slice(18, 20);
+      const day = parseFloat(line.slice(20, 32));
+      if (!/^\d\d$/.test(yy) || !(day >= 1)) continue;
+      const year = Number(yy) < 57 ? 2000 + Number(yy) : 1900 + Number(yy);
+      newest = Math.max(newest, Date.UTC(year, 0, 1) + (day - 1) * 86400_000);
+    }
+    return newest;
+  }
+
   async function fetchUpstream(group) {
     if (Date.now() >= primaryDownUntil) {
       try {
@@ -103,7 +120,9 @@ export function celestrakProxy() {
       signal,
     );
     if (!/^1 /m.test(body)) throw new Error('no TLE lines in mirror response');
-    return { at: Date.now(), body };
+    // `at` stays the fetch time (it paces the refresh); an old copy is flagged so it is sent as STALE-ERROR
+    const old = !(Date.now() - newestTleEpochMs(body) <= MIRROR_STALE_MS);
+    return { at: Date.now(), body, ...(old ? { stale: true } : {}) };
   }
 
   async function fetchCelestrak(group) {
@@ -163,7 +182,8 @@ export function celestrakProxy() {
         if (res.headersSent) return;
         res.writeHead(status, {
           'Content-Type': 'text/plain',
-          'x-tle-cache': cacheStatus,
+          // an old mirror copy reads as stale to the satellites layer, however it was served
+          'x-tle-cache': entry?.stale ? 'STALE-ERROR' : cacheStatus,
           'Cache-Control': 'no-store',
           ...(entry
             ? { 'X-TLE-Cached-At': new Date(entry.at).toISOString() }
