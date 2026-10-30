@@ -10,9 +10,9 @@ What is different from upstream (everything else is untouched):
 - `jarvis-gate.mjs` — the door. God's View is a local dev server (upstream `SECURITY.md`: put it behind your own
   auth before exposing it), so here it runs on `127.0.0.1` inside the container and the gate is the only thing the
   internet reaches. You get in with the Jarvis key: Jarvis's console posts it to `/__jarvis`, the gate checks it
-  against Jarvis (`JARVIS_URL`), sets a signed 30-day session cookie and sends you to the view Jarvis asked for
-  (God's View's own share link, `#lat=…&lon=…&alt=…&v=2&l=v.o.l.y`). `/__health` is open for Railway;
-  `/__logout` ends the session.
+  against Jarvis (`JARVIS_URL`), sets a signed 30-day session cookie bound to that key and sends you to the view
+  Jarvis asked for (God's View's own share link, `#lat=…&lon=…&alt=…&v=2&l=v.o.l.y`). `/__health` is open for
+  Railway; `/__logout` clears the cookie in that browser (a copied cookie is ended by rotating the key, below).
 - `Dockerfile` — starts the gate instead of `scripts/docker-start.mjs` (the gate starts that itself) and
   health-checks `/__health`.
 - `railway.json` — Dockerfile build, `/__health`, a 5-minute first start (Vite's first dependency pass).
@@ -40,6 +40,12 @@ Env on Railway: `GATE_SECRET` (random; keeps sessions across restarts), `JARVIS_
 (default `https://jarvis7.up.railway.app`), optional `GATE_HOSTS` (a custom domain), and any of God's View's own
 keys from `.env.example` (Google Maps / Cesium ion for photoreal 3D, AISStream for ships, FIRMS for fires, OpenAI
 for its voice agent). None is needed to start.
+
+Rotating the Jarvis key (`JARVIS_KEY` in Jarvis) ends every session the old key opened: the gate asks Jarvis about
+the key again within 2 minutes of use, and the first sign-in with the new key ends the old key's sessions at once.
+The gate keeps what it knows about the key in memory only, so after a gate restart old sessions work again until the
+new key is used; after a leak, open God's View once from Jarvis with the new key, or change `GATE_SECRET`, which ends
+every session.
 
 Updating from upstream: copy a newer upstream tree over this one (keeping the three files above and leaving
 `docs/media/` out), run it locally with `node jarvis-gate.mjs`, push.
