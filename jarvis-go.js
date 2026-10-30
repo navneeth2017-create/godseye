@@ -51,9 +51,22 @@
     var chip = Array.prototype.find.call(document.querySelectorAll('#sl-provider-chips button'), function (b) { return /google/i.test(b.textContent); });
     if (chip && chip.getAttribute('aria-pressed') !== 'true') { chip.click(); await sleep(1200); }
     var sl = gev.dataManager && gev.dataManager.layers && gev.dataManager.layers.get('street-level');
-    var opened = sl && sl.module && typeof sl.module.openNearest === 'function'
-      ? await Promise.resolve(sl.module.openNearest(null, { aim: 'screen-centre' })).catch(function () { return false; })
-      : false;
+    var opened = false;
+    if (sl && sl.module && typeof sl.module.openNearest === 'function') {
+      // the spot under the screen centre, then a ring around it (panoramas sit on streets, the pin may not)
+      var cvs = gev.viewer.canvas, mid = gev.viewer.camera.pickEllipsoid({ x: cvs.clientWidth / 2, y: cvs.clientHeight / 2 });
+      var c0 = mid && gev.viewer.scene.globe.ellipsoid.cartesianToCartographic(mid);
+      var at = c0 ? { lat: c0.latitude * 180 / Math.PI, lon: c0.longitude * 180 / Math.PI } : here;
+      var tries = [[0, 0]];
+      [60, 120].forEach(function (m) { for (var a = 0; a < 360; a += 45) tries.push([m * Math.cos(a * Math.PI / 180), m * Math.sin(a * Math.PI / 180)]); });
+      var shown = function () { var w = document.getElementById('sl-viewer-wrap'); return w && !w.hidden; };
+      for (var i = 0; i < tries.length && !shown(); i++) {
+        var pt = { lat: at.lat + tries[i][0] / 111320, lon: at.lon + tries[i][1] / (111320 * Math.cos(at.lat * Math.PI / 180)) };
+        await Promise.resolve(sl.module.openNearest(pt, {})).catch(function () {});
+        await sleep(1800);
+      }
+      opened = shown();
+    }
 
     // the CCTV window, only for a public camera that is actually near (never fly off to a far one)
     var near = null;
