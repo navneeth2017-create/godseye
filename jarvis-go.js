@@ -138,7 +138,8 @@
     if (near) {
       await run('control_cctv', { action: 'enable' });
       await sleep(1500);
-      await run('control_cctv', { action: 'select', cameraQuery: near.cam.name || near.cam.id });
+      // by id: names repeat (two cameras at one interchange) and select takes the first camera with the name
+      await run('control_cctv', { action: 'select', cameraQuery: near.cam.id || near.cam.name });
       await run('set_panel_open', { panelId: 'cctv-panel', open: true });
     }
     if (!near) note((opened === false ? 'No Street View right there' : 'Street View') + ' \u2014 no public traffic camera near ' + (place || 'here') + '.');
