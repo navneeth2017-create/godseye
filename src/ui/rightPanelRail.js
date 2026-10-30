@@ -140,6 +140,7 @@ export function layoutRightPanelRail({
     for (const panel of panels)
       panel.style.removeProperty('--right-panel-allocated-height');
     stack.dataset.layoutMode = 'mobile';
+    stack.removeAttribute('data-over-hud');
     return;
   }
 
@@ -178,6 +179,8 @@ export function layoutRightPanelRail({
       right: rect.right,
       top: rect.top,
       bottom: rect.bottom,
+      // the corner readouts are decoration; the open panel may cover them
+      soft: Boolean(obstacle.closest?.('#intel-hud')),
     });
   }
 
@@ -228,7 +231,7 @@ export function layoutRightPanelRail({
       0,
     ) +
     gap * Math.max(0, measuredPanels.length - 1);
-  const layout = resolveHudRailLayout({
+  const railInput = {
     viewportHeight,
     panelHeight: naturalHeight,
     laneLeft: stackRect.left,
@@ -238,8 +241,23 @@ export function layoutRightPanelRail({
     baseBottom: viewportHeight * 0.96,
     gap: safeGap,
     align: 'start',
-  });
+  };
+  let layout = resolveHudRailLayout(railInput);
   if (!layout) return;
+  // Big text (browser zoom, small windows) can leave only a sliver between the
+  // corner readouts; then the panel takes the lane and draws over them.
+  const usableHeight = Math.min(
+    naturalHeight,
+    Math.max(360, viewportHeight * 0.5),
+  );
+  const overHud = layout.maxHeight < usableHeight;
+  if (overHud)
+    layout =
+      resolveHudRailLayout({
+        ...railInput,
+        obstacles: obstacleRects.filter((rect) => !rect.soft),
+      }) || layout;
+  stack.toggleAttribute('data-over-hud', overHud);
   const { safeTop, safeBottom, maxHeight: availableHeight } = layout;
   const stabilityBand = Math.max(48, viewportHeight * 0.06);
   const wasFocused = stack.classList.contains('layout-focus');

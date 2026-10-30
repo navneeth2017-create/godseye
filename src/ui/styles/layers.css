@@ -1244,3 +1244,10 @@ body.recording-mode #right-context-rail > [data-panel-id] {
     width: 100%;
   }
 }
+
+/* The open right panel covering the corner readouts (see rightPanelRail.js): give it a solid backing. */
+#right-context-rail[data-over-hud] {
+  border-radius: 16px;
+  background: rgba(3, 7, 12, 0.86);
+  backdrop-filter: blur(8px);
+}
