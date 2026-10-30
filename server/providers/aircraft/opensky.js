@@ -30,6 +30,7 @@ let _openskyCacheSourceEpochMs = null;
 const OPENSKY_CACHE_MS = 9000;
 /** Per-attempt limit for the global snapshot; it normally arrives in ~1.5 s. */
 const OPENSKY_ATTEMPT_TIMEOUT_MS = 10_000;
+const OPENSKY_UNREACHABLE_COOLDOWN_MS = 10 * 60_000;
 const OPENSKY_STATES_URL =
   'https://opensky-network.org/api/states/all?extended=1';
 /** states/all?extended=1 measures ~0.8 MB anonymously; bounded, not budgeted. */
@@ -96,6 +97,22 @@ async function fetchOpenSkyStates(headers) {
       );
       return { upstream, body };
     } catch (error) {
+      // Unreachable (a connect timeout, or no answer at all within the attempt): from some cloud hosts OpenSky never
+      // answers, and every refresh waited 2 × 10 s before the regional fallback. Don't retry; skip OpenSky for
+      // 10 minutes so the layer goes straight to adsb.lol (the cooldown path below serves the fallback).
+      const unreachable =
+        error?.name === 'TimeoutError' ||
+        error?.cause?.code === 'UND_ERR_CONNECT_TIMEOUT' ||
+        error?.cause?.code === 'ECONNREFUSED' ||
+        error?.cause?.code === 'ENETUNREACH';
+      if (unreachable) {
+        _openskyCooldownUntil = Date.now() + OPENSKY_UNREACHABLE_COOLDOWN_MS;
+        _openskyCooldownStatus = 503;
+        console.warn(
+          `[OpenSky] unreachable (${error?.cause?.code || error?.name}); using the regional fallback for 10 min`,
+        );
+        throw error;
+      }
       if (attempt >= 2 || error?.code === 'RESPONSE_TOO_LARGE') throw error;
       console.warn(
         '[OpenSky] global snapshot attempt failed, retrying:',
