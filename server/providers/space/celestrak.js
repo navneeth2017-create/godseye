@@ -66,7 +66,47 @@ export function celestrakProxy() {
   /** The largest group (`active`) measures ~2.7 MB; this bounds a runaway body. */
   const CELESTRAK_MAX_RESPONSE_BYTES = 16 * 1024 * 1024;
 
+  // CelesTrak doesn't answer some cloud hosts (from Railway every connection times out), so when it fails the
+  // groups come from the copy .github/workflows/tle-mirror.yml keeps on the tle-data branch (refreshed every 6 h).
+  // After a CelesTrak failure it isn't asked again for 30 minutes, so the layer never waits on a dead host.
+  const MIRROR_URL = (
+    process.env.TLE_MIRROR_URL ||
+    'https://raw.githubusercontent.com/navneeth2017-create/godseye/tle-data/tle'
+  ).replace(/\/+$/, '');
+  let primaryDownUntil = 0;
+
   async function fetchUpstream(group) {
+    if (Date.now() >= primaryDownUntil) {
+      try {
+        return await fetchCelestrak(group);
+      } catch (err) {
+        primaryDownUntil = Date.now() + 30 * 60_000;
+        console.warn(
+          `[celestrak-proxy] CelesTrak failed (${group}: ${err?.cause?.code || err?.message || err}) — using the mirror for 30 min`,
+        );
+      }
+    }
+    if (!MIRROR_URL || process.env.TLE_MIRROR_URL === 'off') {
+      throw new Error('CelesTrak down and no mirror');
+    }
+    const signal = AbortSignal.timeout(20000);
+    const res = await fetch(`${MIRROR_URL}/${encodeURIComponent(group)}.txt`, {
+      signal,
+    });
+    if (!res.ok) {
+      void res.body?.cancel().catch(() => {});
+      throw new Error(`mirror HTTP ${res.status}`);
+    }
+    const body = await readResponseTextCapped(
+      res,
+      CELESTRAK_MAX_RESPONSE_BYTES,
+      signal,
+    );
+    if (!/^1 /m.test(body)) throw new Error('no TLE lines in mirror response');
+    return { at: Date.now(), body };
+  }
+
+  async function fetchCelestrak(group) {
     const url = celestrakTleUrl(group);
     const signal = AbortSignal.timeout(20000);
     const res = await fetch(url.toString(), {
@@ -81,8 +121,8 @@ export function celestrakProxy() {
     if (!res.ok) {
       // Group refreshes run in parallel: a later failure without Retry-After
       // must never shorten a longer deadline an earlier one already set.
-      cooldownUntil = Math.max(
-        cooldownUntil,
+      primaryDownUntil = Math.max(
+        primaryDownUntil,
         Date.now() + providerCooldownMs(res),
       );
       void res.body?.cancel().catch(() => {});
