@@ -61,15 +61,19 @@ function openSkyRateLimitCooldownMs(upstream) {
  * OPENSKY_ATTEMPT_TIMEOUT_MS and retrying once when an attempt times out or
  * the connection fails. An oversized body is not retried: it would fail again
  * and spend more credits. A second failure throws, which the proxy answers
- * from its stale cache or the regional fallback.
+ * from its stale cache or the regional fallback; when neither attempt got an
+ * answer at all, OpenSky is also skipped for OPENSKY_UNREACHABLE_COOLDOWN_MS.
  * @param {Record<string, string>} headers Request headers.
  * @returns {Promise<{upstream: Response, body: string}>}
  */
 async function fetchOpenSkyStates(headers) {
+  let unanswered = 0;
   for (let attempt = 1; ; attempt++) {
+    let responded = false;
     try {
       const signal = AbortSignal.timeout(OPENSKY_ATTEMPT_TIMEOUT_MS);
       const upstream = await fetch(OPENSKY_STATES_URL, { headers, signal });
+      responded = true;
       if (upstream.status === 429 || upstream.status >= 500) {
         // Start the cooldown from the headers and drop the rejected body
         // unread, so a stalled or oversized 429 body cannot skip it.
@@ -97,15 +101,21 @@ async function fetchOpenSkyStates(headers) {
       );
       return { upstream, body };
     } catch (error) {
-      // Unreachable (a connect timeout, or no answer at all within the attempt): from some cloud hosts OpenSky never
-      // answers, and every refresh waited 2 × 10 s before the regional fallback. Don't retry; skip OpenSky for
-      // 10 minutes so the layer goes straight to adsb.lol (the cooldown path below serves the fallback).
+      // Unreachable (a connect timeout, or no headers at all within the attempt): from some cloud hosts OpenSky never
+      // answers, and every refresh waited 2 × 10 s before the regional fallback. After two such attempts in a row,
+      // skip OpenSky for 10 minutes so the layer goes straight to adsb.lol (the cooldown path below serves the
+      // fallback). A body still streaming when the attempt runs out did answer: retried once, no cooldown.
       const unreachable =
-        error?.name === 'TimeoutError' ||
-        error?.cause?.code === 'UND_ERR_CONNECT_TIMEOUT' ||
-        error?.cause?.code === 'ECONNREFUSED' ||
-        error?.cause?.code === 'ENETUNREACH';
-      if (unreachable) {
+        !responded &&
+        (error?.name === 'TimeoutError' ||
+          [
+            'UND_ERR_CONNECT_TIMEOUT',
+            'ECONNREFUSED',
+            'ENETUNREACH',
+            'EHOSTUNREACH',
+          ].includes(error?.cause?.code));
+      unanswered = unreachable ? unanswered + 1 : 0;
+      if (unanswered >= 2) {
         _openskyCooldownUntil = Date.now() + OPENSKY_UNREACHABLE_COOLDOWN_MS;
         _openskyCooldownStatus = 503;
         console.warn(

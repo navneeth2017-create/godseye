@@ -230,6 +230,90 @@ const regionalFallback = () =>
     ac: [{ hex: 'abc123', lat: 30, lon: -97, alt_baro: 10000 }],
   });
 
+test('OpenSky body still streaming at the attempt limit is retried with no cooldown; two unanswered attempts start one', async (t) => {
+  environment(t, openSkyAnonEnv);
+  t.mock.method(console, 'warn', () => {});
+  t.mock.method(console, 'error', () => {});
+  // a 50 ms attempt limit instead of 10 s (a ref'd timer: AbortSignal.timeout's
+  // own does not keep the test alive)
+  const timeout = AbortSignal.timeout.bind(AbortSignal);
+  t.mock.method(AbortSignal, 'timeout', (ms) => {
+    if (ms !== 10_000) return timeout(ms);
+    const controller = new AbortController();
+    setTimeout(
+      () =>
+        controller.abort(
+          new DOMException(
+            'The operation was aborted due to timeout',
+            'TimeoutError',
+          ),
+        ),
+      50,
+    );
+    return controller.signal;
+  });
+  // headers at once, then the body stalls past the attempt limit
+  const streaming = () =>
+    new Response(
+      new ReadableStream({
+        start(controller) {
+          controller.enqueue(new TextEncoder().encode('{"time":'));
+        },
+      }),
+    );
+  const unanswered = () =>
+    Promise.reject(
+      new DOMException(
+        'The operation was aborted due to timeout',
+        'TimeoutError',
+      ),
+    );
+  let respond;
+  let states = 0;
+  t.mock.method(globalThis, 'fetch', async (url) => {
+    if (url.includes('/states/')) return respond(++states);
+    if (url.includes('/lat/')) return regionalFallback();
+    throw Error(`Unexpected URL: ${url}`);
+  });
+  const load = async (tag) =>
+    install(
+      (
+        await import(
+          `../../server/providers/aircraft/opensky.js?${tag}=${Math.random()}`
+        )
+      ).openSkyProxy(),
+    );
+
+  const request = await load('streaming');
+  respond = streaming;
+  const slow = await request('/api/flights', '?lat=30&lon=-97');
+  assert.equal(states, 2, 'a slow body is retried once');
+  assert.equal(slow.headers['x-flight-source'], 'adsb.lol');
+  assert.equal(
+    slow.headers['x-opensky-auth-reason'],
+    'opensky_proxy_error_regional_fallback',
+  );
+  respond = () =>
+    Response.json({ time: Math.floor(Date.now() / 1000), states: [] });
+  const next = await request('/api/flights', '?lat=30&lon=-97');
+  assert.equal(states, 3, 'no cooldown: the next refresh asks OpenSky again');
+  assert.equal(next.statusCode, 200);
+  assert.equal(next.headers['x-flight-source'], undefined);
+
+  const down = await load('unanswered');
+  states = 0;
+  respond = unanswered;
+  const first = await down('/api/flights', '?lat=30&lon=-97');
+  assert.equal(states, 2, 'an unanswered attempt is retried once');
+  assert.equal(first.headers['x-flight-source'], 'adsb.lol');
+  const cooling = await down('/api/flights', '?lat=30&lon=-97');
+  assert.equal(states, 2, 'two unanswered attempts skip OpenSky for a while');
+  assert.equal(
+    cooling.headers['x-opensky-auth-reason'],
+    'opensky_cooldown_regional_fallback',
+  );
+});
+
 test('OpenSky 429 starts the cooldown from headers and cancels the body unread', async (t) => {
   environment(t, openSkyAnonEnv);
   t.mock.method(console, 'warn', () => {});
