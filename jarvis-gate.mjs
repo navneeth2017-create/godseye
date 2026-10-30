@@ -16,6 +16,7 @@
  * sessions survive a restart), GATE_HOSTS (extra public hostnames, comma separated), GEV_INNER_PORT (default 4174).
  */
 import http from 'node:http';
+import fs from 'node:fs';
 import net from 'node:net';
 import crypto from 'node:crypto';
 import { spawn } from 'node:child_process';
@@ -98,13 +99,17 @@ function readForm(req) {
   });
 }
 
-const BACK = `<a id="jarvis-back" href="${esc(JARVIS)}/console" title="Back to Jarvis" style="position:fixed;left:14px;bottom:14px;z-index:2147483000;display:inline-flex;align-items:center;gap:6px;padding:9px 14px;border-radius:999px;background:rgba(5,7,13,.88);border:1px solid #1f3b57;color:#cfe8ff;font:600 14px/1 ui-monospace,Menlo,monospace;letter-spacing:.08em;text-decoration:none;backdrop-filter:blur(6px)">&larr; JARVIS</a>`;
+const GO_JS = fs.readFileSync(new URL('./jarvis-go.js', import.meta.url), 'utf8');
+const BACK = `<script src="/__jarvis-go.js" defer></script><a id="jarvis-back" href="${esc(JARVIS)}/console" title="Back to Jarvis" style="position:fixed;left:14px;bottom:14px;z-index:2147483000;display:inline-flex;align-items:center;gap:6px;padding:9px 14px;border-radius:999px;background:rgba(5,7,13,.88);border:1px solid #1f3b57;color:#cfe8ff;font:600 14px/1 ui-monospace,Menlo,monospace;letter-spacing:.08em;text-decoration:none;backdrop-filter:blur(6px)">&larr; JARVIS</a>`;
 
 // ── the proxy ───────────────────────────────────────────────────────────────────────────────────────────────────────
 const HOP = new Set(['connection', 'keep-alive', 'proxy-connection', 'transfer-encoding', 'te', 'trailer', 'upgrade', 'forwarded', 'x-real-ip', 'cf-connecting-ip', 'true-client-ip']);
 function innerHeaders(req) {
   const h = {};
   for (const [k, v] of Object.entries(req.headers)) if (!HOP.has(k) && !k.startsWith('x-forwarded-') && !k.startsWith('x-railway-')) h[k] = v;
+  // Railway ends TLS before us and God's View speaks plain http, so a same-origin Origin (https://host) would
+  // read as cross-origin to it: hand it the http form of our own origin.
+  if (h.origin && h.host && h.origin === `https://${h.host}`) h.origin = `http://${h.host}`;
   // God's View never sees the gate's cookie
   if (h.cookie) { h.cookie = String(h.cookie).split(/;\s*/).filter((c) => !c.startsWith(`${COOKIE}=`)).join('; '); if (!h.cookie) delete h.cookie; }
   return h;
@@ -134,6 +139,7 @@ const server = http.createServer(async (req, res) => {
   const page = req.method === 'GET' && /text\/html/.test(String(req.headers.accept || ''));
   const headers = innerHeaders(req);
   if (page) headers['accept-encoding'] = 'identity';
+  if (url.pathname === '/__jarvis-go.js') { res.writeHead(200, { 'content-type': 'text/javascript; charset=utf-8', 'cache-control': 'no-cache' }); return res.end(GO_JS); }
   const up = http.request({ host: '127.0.0.1', port: INNER, method: req.method, path: req.url, headers }, (r) => {
     if (!page || !/text\/html/.test(String(r.headers['content-type'] || ''))) { res.writeHead(r.statusCode || 502, r.headers); return r.pipe(res); }
     const chunks = [];
