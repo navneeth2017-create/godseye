@@ -1,3 +1,9 @@
+> **Monarch · God's View for Jarvis.** Monarch's build of the live 3D globe for Jarvis: locked behind the Jarvis
+> key, opened by voice ("go to Shibuya Crossing", "show me the radar over Phoenix"), with Street View and live
+> camera windows, live weather tracking, and fixes for big-text screens. What we added and how to run it:
+> [`JARVIS.md`](JARVIS.md). Built on the open-source [God's Eye View](https://github.com/bilawalsidhu/gods-eye-view)
+> by Bilawal Sidhu (MIT, see [`LICENSE`](LICENSE)); its original README follows.
+
 <div align="center">
 
 # 🌐 God's Eye View

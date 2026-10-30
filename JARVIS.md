@@ -17,6 +17,24 @@ What is different from upstream (everything else is untouched):
   health-checks `/__health`.
 - `railway.json` — Dockerfile build, `/__health`, a 5-minute first start (Vite's first dependency pass).
 - `docs/media/` is left out (68 MB of demo GIFs and videos the app never loads).
+- `jarvis-go.js` — served by the gate on every page. A Jarvis link ending `&jv=street&jq=<place>` flies there with
+  God's View's own commands, opens Google Street View at the spot and the live CCTV window when a public camera is
+  within 25 km. The gate also adds a `← JARVIS` button, an "Open with Jarvis" door, and hands God's View the http
+  form of the browser's Origin (TLS ends at Railway; without it same-site endpoints such as camera frames 403).
+- `src/ui/leftPanelRail.js`, `src/ui/rightPanelRail.js`, `src/ui/styles/layers.css` — at big text sizes an open
+  side panel takes the whole lane instead of shrinking between the corner readouts, which fade out.
+
+## Setting it up for another Jarvis
+
+1. New Railway project from this repo (Dockerfile build). Variables: `JARVIS_URL` (that Jarvis), `GATE_SECRET`
+   (any long random string), `GOOGLE_MAPS_API_KEY` (photoreal 3D + Street View; restrict it to Map Tiles API and
+   Maps JavaScript API). Optional free keys: `FIRMS_MAP_KEY` (active fires), `AISSTREAM_API_KEY` (ships),
+   `TOMTOM_API_KEY` (live traffic).
+2. Generate a domain; in that Jarvis set `GODSVIEW_URL` to it.
+3. Jarvis side (navneeth2017-create/jarvis): `memory/godsview.js`, `memory/skywatch.js`, the `/world/link` and
+   `/sky` routes and `startSkywatch()` in `memory/service.js`, the `world`/`sky` intents in `memory/brain.js`,
+   the 🌐 button and `openWorld()` in `memory/console.html`, and the `jarvis_weather` / `jarvis_gods_view_link`
+   MCP tools.
 
 Env on Railway: `GATE_SECRET` (random; keeps sessions across restarts), `JARVIS_URL`
 (default `https://jarvis7.up.railway.app`), optional `GATE_HOSTS` (a custom domain), and any of God's View's own
