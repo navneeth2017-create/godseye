@@ -172,7 +172,7 @@ export function celestrakProxy() {
                 if (Date.now() >= cooldownUntil)
                   cooldownUntil = Date.now() + 60000;
                 console.warn(
-                  '[celestrak-proxy] refresh failed — serving cache if any',
+                  `[celestrak-proxy] refresh failed (${group}: ${err?.cause?.code || err?.message || err}) — serving cache if any`,
                 );
                 return null;
               })

@@ -16,6 +16,7 @@ const LEFT_STACK_OBSTACLE_SELECTOR = [
   '#top-center-actions',
   '#traffic-sync-chip',
   '#cctv-sync-chip',
+  '#jarvis-back',
   '#intel-hud .hud-top-left',
   '#intel-hud .hud-top-right',
   '#intel-hud .hud-bottom-left',
@@ -58,6 +59,7 @@ const RIGHT_STACK_OBSTACLE_SELECTOR = [
   '#cesium-credits .cesium-credit-textContainer',
   '#command-dock',
   '#gev-voice-control',
+  '#locale-picker',
 ].join(', ');
 export class PanelLayoutController {
   constructor({

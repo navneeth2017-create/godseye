@@ -1245,9 +1245,13 @@ body.recording-mode #right-context-rail > [data-panel-id] {
   }
 }
 
-/* The open right panel covering the corner readouts (see rightPanelRail.js): give it a solid backing. */
-#right-context-rail[data-over-hud] {
-  border-radius: 16px;
-  background: rgba(3, 7, 12, 0.86);
-  backdrop-filter: blur(8px);
+/* An open side panel that took the whole lane over the corner readouts (leftPanelRail.js / rightPanelRail.js):
+   the readouts on that side step aside. filter, not opacity, so the rails still measure them. */
+#intel-hud :is(.hud-top-left, .hud-bottom-left, .hud-top-right, .hud-bottom-right) {
+  transition: filter 0.2s ease;
+}
+body:has(#left-panel-stack[data-over-hud]) #intel-hud :is(.hud-top-left, .hud-bottom-left),
+body:has(#right-context-rail[data-over-hud]) #intel-hud :is(.hud-top-right, .hud-bottom-right) {
+  filter: opacity(0);
+  pointer-events: none;
 }

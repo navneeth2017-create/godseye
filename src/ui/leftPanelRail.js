@@ -56,6 +56,7 @@ export function layoutLeftPanelRail({
     stack.style.removeProperty('--left-stack-safe-bottom');
     stack.style.removeProperty('--left-stack-centered-height');
     stack.dataset.layoutMode = 'mobile';
+    stack.removeAttribute('data-over-hud');
     for (const panel of panels) {
       panel.removeAttribute('aria-hidden');
       panel.style.removeProperty('--left-panel-allocated-height');
@@ -68,10 +69,7 @@ export function layoutLeftPanelRail({
   const baseTop = viewportHeight * 0.26;
   const baseBottomInset = viewportHeight * 0.04;
   const safeGap = viewportHeight * 0.012;
-  let obstacleSafeTop = viewportHeight * 0.04;
-  let safeTop = baseTop;
-  let safeBottom = viewportHeight - baseBottomInset;
-  const bottomObstacles = [];
+  const lane = [];
 
   for (const obstacle of obstacles) {
     if (stack.contains(obstacle)) continue;
@@ -94,19 +92,36 @@ export function layoutLeftPanelRail({
       rect.right > stackRect.left && rect.left < stackRect.right;
     if (!overlapsHorizontally) continue;
 
-    if (rect.top < baseTop && rect.bottom <= viewportHeight * 0.5) {
-      const obstacleBottom = rect.bottom + safeGap;
-      obstacleSafeTop = Math.max(obstacleSafeTop, obstacleBottom);
-      safeTop = Math.max(safeTop, obstacleBottom);
-    } else if (rect.top >= baseTop) {
-      bottomObstacles.push({ top: rect.top });
-    }
+    // the corner readouts are decoration; an open panel may cover them
+    lane.push({ rect, soft: Boolean(obstacle.closest?.('#intel-hud')) });
   }
-  safeBottom = resolveLeftStackBottomBoundary({
-    baseBottom: safeBottom,
-    obstacles: bottomObstacles,
-    safeGap,
-  });
+  const corridor = (withSoft) => {
+    let top = viewportHeight * 0.04, aligned = baseTop;
+    const below = [];
+    for (const { rect, soft } of lane) {
+      if (soft && !withSoft) continue;
+      if (rect.top < baseTop && rect.bottom <= viewportHeight * 0.5) {
+        top = Math.max(top, rect.bottom + safeGap);
+        aligned = Math.max(aligned, rect.bottom + safeGap);
+      } else if (rect.top >= baseTop) {
+        below.push({ top: rect.top });
+      }
+    }
+    const bottom = resolveLeftStackBottomBoundary({
+      baseBottom: viewportHeight - baseBottomInset,
+      obstacles: below,
+      safeGap,
+    });
+    return { obstacleSafeTop: top, safeTop: aligned, safeBottom: bottom };
+  };
+  // Big text (browser zoom, short windows) leaves only a sliver between the
+  // readouts; then an open panel takes the lane and the readouts step aside.
+  let { obstacleSafeTop, safeTop, safeBottom } = corridor(true);
+  const overHud =
+    panels.some((panel) => !panel.classList.contains('collapsed')) &&
+    safeBottom - safeTop < Math.max(360, viewportHeight * 0.5);
+  if (overHud) ({ obstacleSafeTop, safeTop, safeBottom } = corridor(false));
+  stack.toggleAttribute('data-over-hud', overHud);
 
   const obstacleSafeBottom = safeBottom;
 
