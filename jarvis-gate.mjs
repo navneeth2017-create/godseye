@@ -78,9 +78,12 @@ function doorPage(res, { status = 200, msg = '', to = '' } = {}) {
 <title>God's View</title><style>body{margin:0;min-height:100vh;display:grid;place-items:center;background:#05070d;color:#cfe8ff;font:16px/1.5 ui-monospace,Menlo,monospace}
 form{width:min(360px,calc(100vw - 32px));padding:28px;border:1px solid #1f3b57;border-radius:14px;background:#0a1220}h1{font-size:18px;letter-spacing:.2em;margin:0 0 6px}
 p{margin:0 0 18px;color:#7fa3c4;font-size:13px}input,button{width:100%;box-sizing:border-box;padding:12px;border-radius:10px;font:inherit}
-input{background:#05070d;color:#cfe8ff;border:1px solid #1f3b57;margin-bottom:12px}button{background:#38bdf8;color:#05070d;border:0;font-weight:700;cursor:pointer}.err{color:#fca5a5}</style></head>
-<body><form method="post" action="/__jarvis"><h1>GOD'S VIEW</h1><p class="${msg ? 'err' : ''}">${esc(msg || 'Open it from Jarvis, or enter your Jarvis key.')}</p>
-<input type="password" name="key" placeholder="Jarvis key" autocomplete="current-password" required autofocus><input type="hidden" name="to" value="${esc(to)}">
+input{background:#05070d;color:#cfe8ff;border:1px solid #1f3b57;margin-bottom:12px}button{background:#1f3b57;color:#cfe8ff;border:0;font-weight:700;cursor:pointer}.err{color:#fca5a5}
+.j{display:block;text-align:center;padding:14px;border-radius:10px;background:#38bdf8;color:#05070d;font-weight:700;text-decoration:none}.or{margin:16px 0 10px;text-align:center}</style></head>
+<body><form method="post" action="/__jarvis"><h1>GOD'S VIEW</h1><p class="${msg ? 'err' : ''}">${esc(msg || 'Locked to your Jarvis.')}</p>
+<a class="j" href="${esc(`${JARVIS}/console?world=${encodeURIComponent(to || '#')}`)}">Open with Jarvis</a>
+<p class="or">or enter your Jarvis key</p>
+<input type="password" name="key" placeholder="Jarvis key" autocomplete="current-password" required><input type="hidden" name="to" value="${esc(to)}">
 <button>Enter</button></form></body></html>`);
 }
 function startingPage(res) {
@@ -94,6 +97,8 @@ function readForm(req) {
     req.on('error', () => resolve({}));
   });
 }
+
+const BACK = `<a id="jarvis-back" href="${esc(JARVIS)}/console" title="Back to Jarvis" style="position:fixed;left:14px;bottom:14px;z-index:2147483000;display:inline-flex;align-items:center;gap:6px;padding:9px 14px;border-radius:999px;background:rgba(5,7,13,.88);border:1px solid #1f3b57;color:#cfe8ff;font:600 14px/1 ui-monospace,Menlo,monospace;letter-spacing:.08em;text-decoration:none;backdrop-filter:blur(6px)">&larr; JARVIS</a>`;
 
 // ── the proxy ───────────────────────────────────────────────────────────────────────────────────────────────────────
 const HOP = new Set(['connection', 'keep-alive', 'proxy-connection', 'transfer-encoding', 'te', 'trailer', 'upgrade', 'forwarded', 'x-real-ip', 'cf-connecting-ip', 'true-client-ip']);
@@ -125,8 +130,21 @@ const server = http.createServer(async (req, res) => {
     if (req.method === 'GET' && /text\/html/.test(String(req.headers.accept || ''))) { res.writeHead(302, { location: '/__jarvis', 'cache-control': 'no-store' }); return res.end(); }
     res.writeHead(401, { 'content-type': 'application/json' }); return res.end('{"error":"open God\'s View from Jarvis"}');
   }
-  const up = http.request({ host: '127.0.0.1', port: INNER, method: req.method, path: req.url, headers: innerHeaders(req) }, (r) => {
-    res.writeHead(r.statusCode || 502, r.headers); r.pipe(res);
+  // pages get a "← Jarvis" button; ask for them uncompressed so it can be added
+  const page = req.method === 'GET' && /text\/html/.test(String(req.headers.accept || ''));
+  const headers = innerHeaders(req);
+  if (page) headers['accept-encoding'] = 'identity';
+  const up = http.request({ host: '127.0.0.1', port: INNER, method: req.method, path: req.url, headers }, (r) => {
+    if (!page || !/text\/html/.test(String(r.headers['content-type'] || ''))) { res.writeHead(r.statusCode || 502, r.headers); return r.pipe(res); }
+    const chunks = [];
+    r.on('data', (c) => chunks.push(c));
+    r.on('end', () => {
+      const html = Buffer.concat(chunks).toString('utf8');
+      const out = html.includes('</body>') ? html.replace('</body>', `${BACK}</body>`) : html + BACK;
+      const h = { ...r.headers }; delete h['content-length']; delete h['content-encoding']; delete h.etag;
+      res.writeHead(r.statusCode || 200, h); res.end(out);
+    });
+    r.on('error', () => res.destroy());
   });
   up.on('error', () => { if (!res.headersSent) startingPage(res); else res.destroy(); });
   req.pipe(up);
