@@ -45,29 +45,32 @@
     if (mode !== 'street') return;
     var c = gev.viewer.camera.positionCartographic, here = { lat: c.latitude * 180 / Math.PI, lon: c.longitude * 180 / Math.PI };
 
-    // Street View: light Google (the Maps key covers it), then open the panorama nearest the spot
+    // Street View: light Google (the Maps key covers it), then the panorama under the screen centre
     await run('set_layer_visibility', { layerId: 'street-level', enabled: true });
     await sleep(1500);
-    var chip = Array.prototype.find.call(document.querySelectorAll('#sl-provider-chips button'), function (b) { return /google/i.test(b.textContent) && b.getAttribute('aria-pressed') !== 'true'; });
-    if (chip) { chip.click(); await sleep(1200); }
-    var cv = gev.viewer.canvas, r = cv.getBoundingClientRect(), x = r.left + r.width / 2, y = r.top + r.height / 2;
-    ['pointerdown', 'mousedown', 'pointerup', 'mouseup', 'click'].forEach(function (t) {
-      var Ctor = t.indexOf('pointer') === 0 ? PointerEvent : MouseEvent;
-      cv.dispatchEvent(new Ctor(t, { clientX: x, clientY: y, bubbles: true, button: 0, buttons: /down$/.test(t) ? 1 : 0, pointerId: 1, pointerType: 'mouse', isPrimary: true }));
-    });
+    var chip = Array.prototype.find.call(document.querySelectorAll('#sl-provider-chips button'), function (b) { return /google/i.test(b.textContent); });
+    if (chip && chip.getAttribute('aria-pressed') !== 'true') { chip.click(); await sleep(1200); }
+    var sl = gev.dataManager && gev.dataManager.layers && gev.dataManager.layers.get('street-level');
+    var opened = sl && sl.module && typeof sl.module.openNearest === 'function'
+      ? await Promise.resolve(sl.module.openNearest(null, { aim: 'screen-centre' })).catch(function () { return false; })
+      : false;
 
-    // the CCTV window, only if a public camera is actually near
-    await run('control_cctv', { action: 'enable' });
-    await sleep(2500);
-    await run('control_cctv', { action: 'nearest' });
-    await sleep(1500);
-    var img = document.getElementById('cctv-frame'), src = img && (img.currentSrc || img.src) || '';
-    var m = /[?&]lat=(-?[\d.]+)&lon=(-?[\d.]+)/.exec(src);
-    if (!m || km(here, { lat: +m[1], lon: +m[2] }) > 25) {
-      await run('control_cctv', { action: 'disable' });
-      note('No public traffic camera near ' + (place || 'here') + ' — Street View only.');
-    } else {
+    // the CCTV window, only for a public camera that is actually near (never fly off to a far one)
+    var near = null;
+    try {
+      var list = await (await fetch('/api/cctv/sources')).json();
+      (list.sources || []).forEach(function (cam) {
+        if (!Number.isFinite(cam.lat) || !Number.isFinite(cam.lon)) return;
+        var d = km(here, { lat: cam.lat, lon: cam.lon });
+        if (d <= 25 && (!near || d < near.d)) near = { d: d, cam: cam };
+      });
+    } catch (e) { near = null; }
+    if (near) {
+      await run('control_cctv', { action: 'enable' });
+      await sleep(1500);
+      await run('control_cctv', { action: 'select', cameraQuery: near.cam.name || near.cam.id });
       await run('set_panel_open', { panelId: 'cctv-panel', open: true });
     }
+    if (!near) note((opened === false ? 'No Street View right there' : 'Street View') + ' \u2014 no public traffic camera near ' + (place || 'here') + '.');
   }
 })();
