@@ -17,6 +17,7 @@ const LEFT_STACK_OBSTACLE_SELECTOR = [
   '#traffic-sync-chip',
   '#cctv-sync-chip',
   '#jarvis-back',
+  '#jarvis-speed',
   '#intel-hud .hud-top-left',
   '#intel-hud .hud-top-right',
   '#intel-hud .hud-bottom-left',

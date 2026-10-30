@@ -1,7 +1,61 @@
 /* Served by jarvis-gate.mjs as /__jarvis-go.js on every God's View page.
- * Jarvis links can carry a request after God's View's own share hash: #…&jv=street&jq=Shibuya%20Crossing
+ *
+ * Speed mode (on unless switched off with the ⚡ button, remembered per browser): God's View is tuned for a gaming
+ * PC — 4x MSAA, full-detail photoreal tiles and a 1.5 GB (+1 GB overflow) tile cache. On a laptop that stutters,
+ * so speed mode draws with FXAA instead of MSAA, asks the 3D city for a bit less detail far away and keeps a
+ * 512 MB tile cache. Switching it off puts God's View's own values back.
+ *
+ * Jarvis links can also carry a request after God's View's own share hash: #…&jv=street&jq=Shibuya%20Crossing
  * flies there with God's View's built-in commands (the same ones its voice agent uses), opens Google Street View
  * at the spot and, when a public traffic camera is close by, its live CCTV window on the right. */
+(function () {
+  var KEY = 'gv_speed', MB = 1024 * 1024;
+  var on = true;
+  try { on = localStorage.getItem(KEY) !== 'off'; } catch (e) {}
+  var orig = new WeakMap(), sceneOrig = null;
+  function apply() {
+    var gev = window.__godsEyeView, v = gev && gev.viewer;
+    if (!v || !v.scene) return false;
+    var sc = v.scene, changed = false;
+    var set = function (obj, k, val) { if (obj[k] !== val) { obj[k] = val; changed = true; } };
+    if (!sceneOrig) sceneOrig = { msaa: sc.msaaSamples, fxaa: sc.postProcessStages && sc.postProcessStages.fxaa ? sc.postProcessStages.fxaa.enabled : false, globeSse: sc.globe ? sc.globe.maximumScreenSpaceError : 2 };
+    try { set(sc, 'msaaSamples', on ? 1 : sceneOrig.msaa); } catch (e) {}
+    if (sc.postProcessStages && sc.postProcessStages.fxaa) set(sc.postProcessStages.fxaa, 'enabled', on ? true : sceneOrig.fxaa);
+    if (sc.globe) set(sc.globe, 'maximumScreenSpaceError', on ? Math.max(sceneOrig.globeSse, 3) : sceneOrig.globeSse);
+    var prims = sc.primitives;
+    for (var i = 0; prims && i < prims.length; i++) {
+      var t = prims.get(i);
+      if (!t || typeof t.maximumScreenSpaceError !== 'number' || !('cacheBytes' in t)) continue;
+      if (!orig.has(t)) orig.set(t, { sse: t.maximumScreenSpaceError, cache: t.cacheBytes, over: t.maximumCacheOverflowBytes });
+      var o = orig.get(t);
+      set(t, 'maximumScreenSpaceError', on ? Math.max(o.sse, 24) : o.sse);
+      set(t, 'cacheBytes', on ? Math.min(o.cache, 512 * MB) : o.cache);
+      set(t, 'maximumCacheOverflowBytes', on ? Math.min(o.over, 256 * MB) : o.over);
+    }
+    if (changed && sc.requestRender) sc.requestRender();
+    return true;
+  }
+  var btn = null;
+  function paint() { if (btn) { btn.textContent = on ? '\u26a1 SPEED' : '\u26a1 FULL'; btn.title = on ? 'Speed mode is on: lighter drawing for smooth motion. Tap for full quality.' : 'Full quality. Tap for speed mode (smoother on laptops).'; btn.style.color = on ? '#86efac' : '#cfe8ff'; } }
+  function addButton() {
+    if (btn || !document.body) return;
+    btn = document.createElement('button');
+    btn.type = 'button';
+    btn.id = 'jarvis-speed';
+    btn.style.cssText = 'position:fixed;left:132px;bottom:14px;z-index:2147483000;padding:9px 14px;border-radius:999px;background:rgba(5,7,13,.88);border:1px solid #1f3b57;font:600 14px/1 ui-monospace,Menlo,monospace;letter-spacing:.08em;cursor:pointer;backdrop-filter:blur(6px)';
+    btn.onclick = function () { on = !on; try { localStorage.setItem(KEY, on ? 'on' : 'off'); } catch (e) {} paint(); apply(); };
+    paint();
+    document.body.appendChild(btn);
+  }
+  // the 3D city and map stacks come and go (map picker, reloads of the tileset): keep applying
+  var t0 = Date.now();
+  (function tick() {
+    addButton();
+    apply();
+    setTimeout(tick, Date.now() - t0 < 60000 ? 1000 : 5000);
+  })();
+})();
+
 (function () {
   var hash = location.hash || '';
   var mode = (/[#&]jv=([a-z]+)/.exec(hash) || [])[1];
