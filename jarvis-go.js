@@ -129,7 +129,10 @@
       (list.sources || []).forEach(function (cam) {
         if (!Number.isFinite(cam.lat) || !Number.isFinite(cam.lon)) return;
         var d = km(here, { lat: cam.lat, lon: cam.lon });
-        if (d <= 25 && (!near || d < near.d)) near = { d: d, cam: cam };
+        if (d > 25) return;
+        // a live-video camera beats a closer still one
+        var live = cam.feedType === 'hls';
+        if (!near || (live && !near.live) || (live === near.live && d < near.d)) near = { d: d, cam: cam, live: live };
       });
     } catch (e) { near = null; }
     if (near) {

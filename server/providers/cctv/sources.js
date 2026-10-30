@@ -317,6 +317,21 @@ export async function loadCaltransSourcesFromOpenData() {
       );
       if (!imageUrl) continue;
 
+      // Live video when Caltrans publishes an HLS stream on its own media host (most
+      // district cameras do); the still stays the snapshot fallback.
+      // CCTV_CALTRANS_VIDEO=0 keeps stills only.
+      const streamUrl =
+        String(process.env.CCTV_CALTRANS_VIDEO || '1').trim() !== '0'
+          ? pinnedCameraUrl(
+              cctv.imageData?.streamingVideoURL,
+              'https://wzmedia.dot.ca.gov/',
+            )
+          : null;
+      const videoUrl =
+        streamUrl && /\.m3u8$/i.test(new URL(streamUrl).pathname)
+          ? streamUrl
+          : '';
+
       const locationName = String(loc.locationName || '').trim();
       // Leading token of locationName is the stable camera code ("TV102 -- I-580 : …").
       const codeMatch = /^([A-Za-z0-9_-]+)\s*--/.exec(locationName);
@@ -361,8 +376,8 @@ export async function loadCaltransSourcesFromOpenData() {
             ? Math.max(-100, Math.min(4000, ft * 0.3048))
             : 150;
         })(),
-        feedType: 'image',
-        url: imageUrl,
+        feedType: videoUrl ? 'hls' : 'image',
+        url: videoUrl || imageUrl,
         snapshotUrl: imageUrl,
         sourceKind: 'caltrans-open-data',
         license: 'Public Caltrans highway camera frame',
