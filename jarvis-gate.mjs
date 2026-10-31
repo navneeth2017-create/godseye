@@ -47,8 +47,9 @@ process.on('unhandledRejection', (e) => console.error('gate: unhandled rejection
 // ── sessions ────────────────────────────────────────────────────────────────────────────────────────────────────────
 // A session is `exp.kid.sig`: kid fingerprints the Jarvis key that opened the door (keyed with SECRET, so the cookie
 // gives nothing to guess the key against) and sig signs both. Jarvis has one key, so only sessions of the key it last
-// said yes to are let in: once Jarvis refuses that key (rotated) or says yes to a different one, every session the old
-// key opened ends, copied cookies included. Until the gate has seen a key since it started, a valid signature is enough.
+// said yes to are let in: once Jarvis says yes to a different key, every session an older key opened ends, copied
+// cookies included, and once it refuses that key (rotated) no session is let in until a key it takes opens the door.
+// Until Jarvis has said yes to a key since the gate started, a valid signature is enough.
 const sign = (v) => crypto.createHmac('sha256', SECRET).update(v).digest('base64url');
 const keyId = (key) => sign(`jarvis-key:${key}`).slice(0, 22);
 const newSession = (kid) => { const exp = String(Date.now() + DAYS * 86400000); return `${exp}.${kid}.${sign(`${exp}.${kid}`)}`; };
@@ -56,14 +57,14 @@ const same = (a, b) => { const x = Buffer.from(a), y = Buffer.from(b); return x.
 const COOKIE_RE = new RegExp(`(?:^|;\\s*)${COOKIE}=([^;]+)`);
 const KEY_RECHECK_MS = 2 * 60000;
 let current = null; // { kid, key, until }: the key Jarvis last said yes to, trusted without asking until `until`
-const retired = new Set(); // fingerprints of keys Jarvis has since refused
+let confirmed = false; // Jarvis has said yes to a key since the gate started; `current` null after that means refused
 function sessionOk(req) {
   const m = String(req.headers.cookie || '').match(COOKIE_RE);
   if (!m) return false;
   const [exp, kid, sig, extra] = m[1].split('.');
   if (!exp || !kid || !sig || extra !== undefined || !(Number(exp) > Date.now())) return false;
   if (!same(sig, sign(`${exp}.${kid}`))) return false;
-  if (!current) return !retired.has(kid);
+  if (!current) return !confirmed;
   if (Date.now() >= current.until) recheckKey(); // in the background; this request goes on the last answer
   return kid === current.kid;
 }
@@ -75,23 +76,21 @@ async function askJarvis(key) {
     return r.ok ? 'yes' : r.status === 401 || r.status === 403 ? 'no' : 'unsure';
   } catch (e) { console.warn('gate: could not reach Jarvis to check the key:', e.message); return 'unsure'; }
 }
-function retire(kid) {
-  retired.add(kid); if (retired.size > 64) retired.delete(retired.values().next().value);
-  if (current?.kid === kid) current = null; // and the remembered yes goes with it
-}
 // The fingerprint to sign into the session, or false. The current key's yes is reused for KEY_RECHECK_MS.
-async function keyOk(key) {
+async function keyOk(typed) {
+  // Jarvis never sees whitespace around the key (fetch trims the header, its Bearer parsing the rest), so neither does
+  // the fingerprint: "KEY " is the same key as "KEY" and must not end KEY's sessions.
+  const key = typed.trim();
   if (!key || key.length > 512) return false;
   const kid = keyId(key);
   if (current?.kid === kid && Date.now() < current.until) return kid;
   const said = await askJarvis(key);
   if (said === 'yes') {
-    if (current && current.kid !== kid) retire(current.kid); // Jarvis opens with a different key now
-    retired.delete(kid);
-    current = { kid, key, until: Date.now() + KEY_RECHECK_MS };
+    current = { kid, key, until: Date.now() + KEY_RECHECK_MS }; // a different key before it: its sessions end here
+    confirmed = true;
     return kid;
   }
-  if (said === 'no' && current?.kid === kid) retire(kid);
+  if (said === 'no' && current?.kid === kid) current = null; // the key itself is refused, and its remembered yes goes
   return false;
 }
 let rechecking = false;
@@ -101,7 +100,7 @@ function recheckKey() {
   const was = current;
   askJarvis(was.key).then((said) => {
     if (current !== was) return;
-    if (said === 'no') { retire(was.kid); console.warn('gate: Jarvis no longer takes the key, so its sessions are closed'); }
+    if (said === 'no') { current = null; console.warn('gate: Jarvis no longer takes the key, so sessions are closed until the new key is used'); }
     else was.until = Date.now() + (said === 'yes' ? KEY_RECHECK_MS : 60000); // unreachable: keep sessions, ask in a minute
   }).finally(() => { rechecking = false; });
 }

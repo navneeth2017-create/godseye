@@ -42,7 +42,8 @@ keys from `.env.example` (Google Maps / Cesium ion for photoreal 3D, AISStream f
 for its voice agent). None is needed to start.
 
 Rotating the Jarvis key (`JARVIS_KEY` in Jarvis) ends every session the old key opened: the gate asks Jarvis about
-the key again within 2 minutes of use, and the first sign-in with the new key ends the old key's sessions at once.
+the key again within 2 minutes of use and, once Jarvis refuses it, lets no session in until the new key signs in; the
+first sign-in with the new key ends older keys' sessions at once. Spaces around a typed key don't make it another key.
 The gate keeps what it knows about the key in memory only, so after a gate restart old sessions work again until the
 new key is used; after a leak, open God's View once from Jarvis with the new key, or change `GATE_SECRET`, which ends
 every session.
