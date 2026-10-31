@@ -183,6 +183,14 @@ const _adsbLolPointInFlight = new Map();
 const ADSBLOL_POINT_CACHE_MS = 12000;
 const ADSBLOL_POINT_CACHE_MAX = 80;
 const ADSBLOL_POINT_RADIUS_NM = 250;
+// adsb.lol first, then adsb.fi's open data (the same readsb records, listed as `aircraft`; 250 nm max): when one
+// rate-limits (429) or fails, the other is asked and the failing one rests (Retry-After, else 60 s), so a busy
+// exchange doesn't leave every new view empty. (airplanes.live now wants a sign-up for its API, so it isn't listed.)
+const ADSB_POINT_SOURCES = [
+  { name: 'adsb.lol', url: (lat, lon, nm) => `https://api.adsb.lol/v2/lat/${lat}/lon/${lon}/dist/${nm}` },
+  { name: 'adsb.fi', url: (lat, lon, nm) => `https://opendata.adsb.fi/api/v2/lat/${lat}/lon/${lon}/dist/${nm}` },
+];
+const _adsbSourceRestUntil = new Map();
 const ADSBLOL_POINT_MAX_RESPONSE_BYTES = 8 * 1024 * 1024;
 // A 200 response can still contain an old OpenSky snapshot. Past this point
 // the viewport-scoped adsb.lol source is more honest and keeps local motion
@@ -407,39 +415,70 @@ async function fetchAdsbLolPointFallback(req) {
     _adsbLolPointInFlight,
     cacheKey,
     async () => {
-      const controller = new AbortController();
-      const timeoutId = setTimeout(() => controller.abort(), 10000);
-      try {
-        const upstream = await fetch(
-          `https://api.adsb.lol/v2/lat/${roundedLat}/lon/${roundedLon}/dist/${ADSBLOL_POINT_RADIUS_NM}`,
-          {
-            headers: {
-              Accept: 'application/json',
-              'User-Agent': 'gods-eye-view-adsblol-regional-fallback/1.0',
+      let lastError = null;
+      for (const source of ADSB_POINT_SOURCES) {
+        if (Date.now() < (_adsbSourceRestUntil.get(source.name) || 0)) continue;
+        const controller = new AbortController();
+        const timeoutId = setTimeout(() => controller.abort(), 10000);
+        try {
+          const upstream = await fetch(
+            source.url(roundedLat, roundedLon, ADSBLOL_POINT_RADIUS_NM),
+            {
+              headers: {
+                Accept: 'application/json',
+                'User-Agent': 'gods-eye-view-adsblol-regional-fallback/1.0',
+              },
+              signal: controller.signal,
             },
-            signal: controller.signal,
-          },
-        );
-        if (!upstream.ok) throw new Error(`upstream HTTP ${upstream.status}`);
-        const payload = await readResponseJsonCapped(
-          upstream,
-          ADSBLOL_POINT_MAX_RESPONSE_BYTES,
-        );
-        const normalized = normalizeAdsbLolPointResponse(payload);
-        const record = {
-          body: JSON.stringify(normalized),
-          cachedAt: Date.now(),
-          count: normalized.states.length,
-        };
-        _adsbLolPointCache.delete(cacheKey);
-        _adsbLolPointCache.set(cacheKey, record);
-        while (_adsbLolPointCache.size > ADSBLOL_POINT_CACHE_MAX) {
-          _adsbLolPointCache.delete(_adsbLolPointCache.keys().next().value);
+          );
+          if (!upstream.ok) {
+            const retryAfter = Number(upstream.headers.get('retry-after'));
+            _adsbSourceRestUntil.set(
+              source.name,
+              Date.now() +
+                (Number.isFinite(retryAfter) && retryAfter > 0
+                  ? Math.min(retryAfter, 600) * 1000
+                  : 60000),
+            );
+            void upstream.body?.cancel().catch(() => {});
+            throw new Error(`${source.name} upstream HTTP ${upstream.status}`);
+          }
+          const payload = await readResponseJsonCapped(
+            upstream,
+            ADSBLOL_POINT_MAX_RESPONSE_BYTES,
+          );
+          // an answer with no aircraft list (an error message with a 200) is a failure, not an empty sky
+          if (!Array.isArray(payload?.ac) && !Array.isArray(payload?.aircraft)) {
+            _adsbSourceRestUntil.set(source.name, Date.now() + 60000);
+            throw new Error(`${source.name} answered without an aircraft list`);
+          }
+          // adsb.fi names the list `aircraft` instead of `ac`
+          const normalized = normalizeAdsbLolPointResponse(
+            Array.isArray(payload?.ac) || !Array.isArray(payload?.aircraft)
+              ? payload
+              : { ...payload, ac: payload.aircraft },
+          );
+          const record = {
+            body: JSON.stringify(normalized),
+            cachedAt: Date.now(),
+            count: normalized.states.length,
+            source: source.name,
+          };
+          _adsbLolPointCache.delete(cacheKey);
+          _adsbLolPointCache.set(cacheKey, record);
+          while (_adsbLolPointCache.size > ADSBLOL_POINT_CACHE_MAX) {
+            _adsbLolPointCache.delete(_adsbLolPointCache.keys().next().value);
+          }
+          return record;
+        } catch (error) {
+          lastError = error;
+          if (error?.name === 'AbortError')
+            _adsbSourceRestUntil.set(source.name, Date.now() + 30000);
+        } finally {
+          clearTimeout(timeoutId);
         }
-        return record;
-      } finally {
-        clearTimeout(timeoutId);
       }
+      throw lastError || new Error('every regional flight source is resting');
     },
   );
   try {
@@ -463,7 +502,7 @@ async function serveAdsbLolPointFallback(req, res, requestedMode, reason) {
       usedMode: 'adsblol-regional',
       reason,
     }),
-    'X-Flight-Source': 'adsb.lol',
+    'X-Flight-Source': fallback.source || 'adsb.lol',
     'X-Flight-Coverage': `${ADSBLOL_POINT_RADIUS_NM}nm regional fallback`,
     'X-Flight-Count': String(fallback.count),
   });
